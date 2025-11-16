@@ -23,7 +23,6 @@ import java.util.stream.Collectors;
 @CrossOrigin(origins = "*")
 public class TestController {
 
-    // JSON 檔案路徑，可在 application.properties 設定
     @Value("${writeup.json.path}")
     private String jsonFilePath;
 
@@ -34,27 +33,20 @@ public class TestController {
 
     public TestController() {
         this.objectMapper = new ObjectMapper();
-        // 格式化輸出（縮排 2 空格）
         this.objectMapper.enable(SerializationFeature.INDENT_OUTPUT);
     }
 
-    /**
-     * POST /api/saveToJson
-     * 儲存文章資料到 JSON 檔案
-     */
     @PostMapping("/saveToJson")
     public ResponseEntity<Map<String, Object>> saveToJson(@RequestBody List<Map<String, Object>> articles) {
         Map<String, Object> response = new HashMap<>();
 
         try {
-            // 驗證資料
             if (articles == null || articles.isEmpty()) {
                 response.put("success", false);
                 response.put("message", "資料不能為空");
                 return ResponseEntity.badRequest().body(response);
             }
 
-            // 驗證每篇文章的必要欄位
             for (int i = 0; i < articles.size(); i++) {
                 Map<String, Object> article = articles.get(i);
                 if (!article.containsKey("title") ||
@@ -66,21 +58,17 @@ public class TestController {
                 }
             }
 
-            // 確保目錄存在
             File jsonFile = new File(jsonFilePath);
             File parentDir = jsonFile.getParentFile();
             if (parentDir != null && !parentDir.exists()) {
                 parentDir.mkdirs();
             }
 
-            // 寫入 JSON 檔案
             objectMapper.writeValue(jsonFile, articles);
 
-            // 記錄日誌
             String timestamp = LocalDateTime.now().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME);
             System.out.println("[" + timestamp + "] JSON 已更新，共 " + articles.size() + " 筆文章");
 
-            // 回傳成功訊息
             response.put("success", true);
             response.put("message", "儲存成功");
             response.put("count", articles.size());
@@ -97,10 +85,6 @@ public class TestController {
         }
     }
 
-    /**
-     * GET /api/writeup
-     * 讀取 JSON 檔案
-     */
     @GetMapping("/writeup")
     public ResponseEntity<Map<String, Object>> getWriteup() {
         Map<String, Object> response = new HashMap<>();
@@ -114,7 +98,6 @@ public class TestController {
                 return ResponseEntity.status(HttpStatus.NOT_FOUND).body(response);
             }
 
-            // 讀取 JSON 檔案
             String jsonContent = new String(Files.readAllBytes(Paths.get(jsonFilePath)));
             List<Map<String, Object>> articles = objectMapper.readValue(
                     jsonContent,
@@ -136,10 +119,6 @@ public class TestController {
         }
     }
 
-    /**
-     * GET /api/folders
-     * 掃描 /writeups 資料夾，回傳所有資料夾名稱
-     */
     @GetMapping("/folders")
     public ResponseEntity<Map<String, Object>> scanFolders() {
         Map<String, Object> response = new HashMap<>();
@@ -153,9 +132,8 @@ public class TestController {
                 return ResponseEntity.status(HttpStatus.NOT_FOUND).body(response);
             }
 
-            // 取得所有第一層資料夾
             File[] folders = writeupDir.listFiles(File::isDirectory);
-            List<String> folderNames = new java.util.ArrayList<>();
+            List<String> folderNames = new ArrayList<>();
 
             if (folders != null) {
                 for (File folder : folders) {
@@ -179,7 +157,7 @@ public class TestController {
     }
 
     /**
-     * 偵測新資料夾（原有功能 + 檢測遺失資料夾）
+     * 偵測新資料夾（改進版：嚴格比對大小寫）
      */
     @PostMapping("/detectNewFolders")
     public ApiResponse detectNewFolders() {
@@ -188,12 +166,13 @@ public class TestController {
             List<Map<String, Object>> existingArticles = readJsonFile();
             Set<String> existingFolders = existingArticles.stream()
                     .map(article -> (String) article.get("folder"))
+                    .filter(Objects::nonNull)  // 過濾 null 值
                     .collect(Collectors.toSet());
 
             // 2. 讀取實際資料夾
             File baseDir = new File(writeupFolderPath);
             if (!baseDir.exists() || !baseDir.isDirectory()) {
-                return ApiResponse.error("Writeups 目錄不存在");
+                return ApiResponse.error("Writeups 目錄不存在: " + writeupFolderPath);
             }
 
             File[] folders = baseDir.listFiles(File::isDirectory);
@@ -201,28 +180,65 @@ public class TestController {
                 folders = new File[0];
             }
 
+            // 使用 File.getName() 確保取得正確的大小寫
             Set<String> actualFolders = Arrays.stream(folders)
                     .map(File::getName)
                     .collect(Collectors.toSet());
 
-            // 3. 找出新資料夾（實際有但 JSON 沒有）
+            // Debug: 印出所有資料夾名稱
+            System.out.println("=== 偵測資料夾 Debug ===");
+            System.out.println("JSON 中的資料夾: " + existingFolders);
+            System.out.println("實際的資料夾: " + actualFolders);
+
+            // 3. 找出新資料夾（實際有但 JSON 沒有）- 嚴格比對
             List<String> newFolders = actualFolders.stream()
                     .filter(folder -> !existingFolders.contains(folder))
                     .sorted()
                     .collect(Collectors.toList());
 
-            // 4. 找出遺失資料夾（JSON 有但實際沒有）
+            // 4. 找出遺失資料夾（JSON 有但實際沒有）- 嚴格比對
             List<String> missingFolders = existingFolders.stream()
                     .filter(folder -> !actualFolders.contains(folder))
                     .sorted()
                     .collect(Collectors.toList());
+
+            // Debug: 印出比對結果
+            if (!newFolders.isEmpty()) {
+                System.out.println("新資料夾: " + newFolders);
+            }
+            if (!missingFolders.isEmpty()) {
+                System.out.println("遺失資料夾: " + missingFolders);
+                // 詳細比對
+                for (String missing : missingFolders) {
+                    System.out.println("  遺失: '" + missing + "' (長度: " + missing.length() + ")");
+                    // 找出可能的大小寫不同版本
+                    for (String actual : actualFolders) {
+                        if (missing.equalsIgnoreCase(actual)) {
+                            System.out.println("    -> 可能對應實際資料夾: '" + actual + "' (大小寫不同)");
+                        }
+                    }
+                }
+            }
 
             // 5. 準備回傳結果
             Map<String, Object> result = new HashMap<>();
             result.put("newFolders", newFolders);
             result.put("missingFolders", missingFolders);
 
-            String message = buildDetectionMessage(newFolders, missingFolders);
+            // 額外資訊：提供大小寫不同的建議
+            Map<String, String> caseMismatch = new HashMap<>();
+            for (String missing : missingFolders) {
+                for (String actual : actualFolders) {
+                    if (missing.equalsIgnoreCase(actual) && !missing.equals(actual)) {
+                        caseMismatch.put(missing, actual);
+                    }
+                }
+            }
+            if (!caseMismatch.isEmpty()) {
+                result.put("caseMismatch", caseMismatch);
+            }
+
+            String message = buildDetectionMessage(newFolders, missingFolders, caseMismatch);
 
             return ApiResponse.success(message, result);
 
@@ -233,9 +249,9 @@ public class TestController {
     }
 
     /**
-     * 建立偵測訊息
+     * 建立偵測訊息（改進版）
      */
-    private String buildDetectionMessage(List<String> newFolders, List<String> missingFolders) {
+    private String buildDetectionMessage(List<String> newFolders, List<String> missingFolders, Map<String, String> caseMismatch) {
         StringBuilder message = new StringBuilder();
 
         if (!newFolders.isEmpty()) {
@@ -246,7 +262,12 @@ public class TestController {
             if (message.length() > 0) {
                 message.append("；");
             }
-            message.append("發現 ").append(missingFolders.size()).append(" 個遺失資料夾");
+
+            if (!caseMismatch.isEmpty()) {
+                message.append("發現 ").append(caseMismatch.size()).append(" 個資料夾名稱大小寫不一致");
+            } else {
+                message.append("發現 ").append(missingFolders.size()).append(" 個遺失資料夾");
+            }
         }
 
         if (message.length() == 0) {
@@ -255,7 +276,6 @@ public class TestController {
 
         return message.toString();
     }
-
 
     /**
      * 讀取 JSON 檔案
@@ -281,22 +301,18 @@ public class TestController {
             return ApiResponse.error("資料夾名稱不能為空");
         }
 
-        // 移除不合法字元
+        // 移除不合法字元（保留大小寫）
         folderName = folderName.trim().replaceAll("[\\\\/:*?\"<>|]", "");
 
         try {
-            // 建立資料夾路徑
             Path folderPath = Paths.get(writeupFolderPath, folderName);
 
-            // 檢查資料夾是否已存在
             if (Files.exists(folderPath)) {
                 return ApiResponse.error("資料夾「" + folderName + "」已存在");
             }
 
-            // 建立資料夾
             Files.createDirectories(folderPath);
 
-            // 建立 README.md 檔案
             Path readmePath = folderPath.resolve("README.md");
             String readmeContent = "# " + folderName + "\n\n" +
                     "## 簡介\n\n" +
@@ -306,11 +322,56 @@ public class TestController {
 
             Files.writeString(readmePath, readmeContent);
 
+            System.out.println("成功建立資料夾: " + folderPath.toString());
+
             return ApiResponse.success("成功建立資料夾「" + folderName + "」並建立 README.md", folderName);
 
         } catch (IOException e) {
             e.printStackTrace();
             return ApiResponse.error("建立資料夾失敗: " + e.getMessage());
+        }
+    }
+
+    /**
+     * 修正資料夾名稱大小寫（新增）
+     */
+    @PostMapping("/fixFolderCase")
+    public ApiResponse fixFolderCase(@RequestBody Map<String, String> request) {
+        String oldName = request.get("oldName");
+        String newName = request.get("newName");
+
+        if (oldName == null || newName == null) {
+            return ApiResponse.error("參數不完整");
+        }
+
+        try {
+            // 讀取 JSON
+            List<Map<String, Object>> articles = readJsonFile();
+
+            // 更新 JSON 中的資料夾名稱
+            boolean updated = false;
+            for (Map<String, Object> article : articles) {
+                if (oldName.equals(article.get("folder"))) {
+                    article.put("folder", newName);
+                    if (oldName.equals(article.get("title"))) {
+                        article.put("title", newName);
+                    }
+                    updated = true;
+                }
+            }
+
+            if (updated) {
+                // 儲存回 JSON
+                File jsonFile = new File(jsonFilePath);
+                objectMapper.writeValue(jsonFile, articles);
+                return ApiResponse.success("已修正資料夾名稱：" + oldName + " → " + newName, null);
+            } else {
+                return ApiResponse.error("找不到要修正的資料夾");
+            }
+
+        } catch (IOException e) {
+            e.printStackTrace();
+            return ApiResponse.error("修正失敗: " + e.getMessage());
         }
     }
 }
