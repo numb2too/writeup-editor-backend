@@ -157,16 +157,34 @@ public class TestController {
     }
 
     /**
-     * 偵測新資料夾（改進版：嚴格比對大小寫）
+     * 偵測新資料夾（改進版：檢測重複 + 大小寫）
      */
     @PostMapping("/detectNewFolders")
     public ApiResponse detectNewFolders() {
         try {
             // 1. 讀取現有 JSON 資料
             List<Map<String, Object>> existingArticles = readJsonFile();
+
+            // 檢測重複的 folder
+            Map<String, Long> folderCount = existingArticles.stream()
+                    .map(article -> (String) article.get("folder"))
+                    .filter(Objects::nonNull)
+                    .collect(Collectors.groupingBy(
+                            folder -> folder,
+                            Collectors.counting()
+                    ));
+
+            // 找出重複的 folder
+            Map<String, Long> duplicateFolders = folderCount.entrySet().stream()
+                    .filter(entry -> entry.getValue() > 1)
+                    .collect(Collectors.toMap(
+                            Map.Entry::getKey,
+                            Map.Entry::getValue
+                    ));
+
             Set<String> existingFolders = existingArticles.stream()
                     .map(article -> (String) article.get("folder"))
-                    .filter(Objects::nonNull)  // 過濾 null 值
+                    .filter(Objects::nonNull)
                     .collect(Collectors.toSet());
 
             // 2. 讀取實際資料夾
@@ -180,52 +198,35 @@ public class TestController {
                 folders = new File[0];
             }
 
-            // 使用 File.getName() 確保取得正確的大小寫
             Set<String> actualFolders = Arrays.stream(folders)
                     .map(File::getName)
                     .collect(Collectors.toSet());
 
-            // Debug: 印出所有資料夾名稱
+            // Debug 日誌
             System.out.println("=== 偵測資料夾 Debug ===");
             System.out.println("JSON 中的資料夾: " + existingFolders);
             System.out.println("實際的資料夾: " + actualFolders);
 
-            // 3. 找出新資料夾（實際有但 JSON 沒有）- 嚴格比對
+            if (!duplicateFolders.isEmpty()) {
+                System.out.println("⚠️ 發現重複的 folder:");
+                duplicateFolders.forEach((folder, count) ->
+                        System.out.println("  - " + folder + " (出現 " + count + " 次)")
+                );
+            }
+
+            // 3. 找出新資料夾（實際有但 JSON 沒有）
             List<String> newFolders = actualFolders.stream()
                     .filter(folder -> !existingFolders.contains(folder))
                     .sorted()
                     .collect(Collectors.toList());
 
-            // 4. 找出遺失資料夾（JSON 有但實際沒有）- 嚴格比對
+            // 4. 找出遺失資料夾（JSON 有但實際沒有）
             List<String> missingFolders = existingFolders.stream()
                     .filter(folder -> !actualFolders.contains(folder))
                     .sorted()
                     .collect(Collectors.toList());
 
-            // Debug: 印出比對結果
-            if (!newFolders.isEmpty()) {
-                System.out.println("新資料夾: " + newFolders);
-            }
-            if (!missingFolders.isEmpty()) {
-                System.out.println("遺失資料夾: " + missingFolders);
-                // 詳細比對
-                for (String missing : missingFolders) {
-                    System.out.println("  遺失: '" + missing + "' (長度: " + missing.length() + ")");
-                    // 找出可能的大小寫不同版本
-                    for (String actual : actualFolders) {
-                        if (missing.equalsIgnoreCase(actual)) {
-                            System.out.println("    -> 可能對應實際資料夾: '" + actual + "' (大小寫不同)");
-                        }
-                    }
-                }
-            }
-
-            // 5. 準備回傳結果
-            Map<String, Object> result = new HashMap<>();
-            result.put("newFolders", newFolders);
-            result.put("missingFolders", missingFolders);
-
-            // 額外資訊：提供大小寫不同的建議
+            // 5. 檢測大小寫不一致
             Map<String, String> caseMismatch = new HashMap<>();
             for (String missing : missingFolders) {
                 for (String actual : actualFolders) {
@@ -234,11 +235,34 @@ public class TestController {
                     }
                 }
             }
+
+            // Debug: 印出比對結果
+            if (!newFolders.isEmpty()) {
+                System.out.println("新資料夾: " + newFolders);
+            }
+            if (!missingFolders.isEmpty()) {
+                System.out.println("遺失資料夾: " + missingFolders);
+                for (String missing : missingFolders) {
+                    System.out.println("  遺失: '" + missing + "'");
+                    for (String actual : actualFolders) {
+                        if (missing.equalsIgnoreCase(actual)) {
+                            System.out.println("    -> 可能對應: '" + actual + "' (大小寫不同)");
+                        }
+                    }
+                }
+            }
+
+            // 6. 準備回傳結果
+            Map<String, Object> result = new HashMap<>();
+            result.put("newFolders", newFolders);
+            result.put("missingFolders", missingFolders);
+            result.put("duplicateFolders", duplicateFolders);
+
             if (!caseMismatch.isEmpty()) {
                 result.put("caseMismatch", caseMismatch);
             }
 
-            String message = buildDetectionMessage(newFolders, missingFolders, caseMismatch);
+            String message = buildDetectionMessage(newFolders, missingFolders, caseMismatch, duplicateFolders);
 
             return ApiResponse.success(message, result);
 
@@ -249,32 +273,31 @@ public class TestController {
     }
 
     /**
-     * 建立偵測訊息（改進版）
+     * 建立偵測訊息（改進版：加入重複檢測）
      */
-    private String buildDetectionMessage(List<String> newFolders, List<String> missingFolders, Map<String, String> caseMismatch) {
-        StringBuilder message = new StringBuilder();
+    private String buildDetectionMessage(List<String> newFolders, List<String> missingFolders,
+                                         Map<String, String> caseMismatch, Map<String, Long> duplicateFolders) {
+        List<String> messages = new ArrayList<>();
+
+        if (!duplicateFolders.isEmpty()) {
+            messages.add("發現 " + duplicateFolders.size() + " 個重複的資料夾");
+        }
 
         if (!newFolders.isEmpty()) {
-            message.append("發現 ").append(newFolders.size()).append(" 個新資料夾");
+            messages.add("發現 " + newFolders.size() + " 個新資料夾");
         }
 
-        if (!missingFolders.isEmpty()) {
-            if (message.length() > 0) {
-                message.append("；");
-            }
-
-            if (!caseMismatch.isEmpty()) {
-                message.append("發現 ").append(caseMismatch.size()).append(" 個資料夾名稱大小寫不一致");
-            } else {
-                message.append("發現 ").append(missingFolders.size()).append(" 個遺失資料夾");
-            }
+        if (!caseMismatch.isEmpty()) {
+            messages.add("發現 " + caseMismatch.size() + " 個大小寫不一致");
+        } else if (!missingFolders.isEmpty()) {
+            messages.add("發現 " + missingFolders.size() + " 個遺失資料夾");
         }
 
-        if (message.length() == 0) {
-            message.append("沒有發現新增或遺失的資料夾");
+        if (messages.isEmpty()) {
+            return "沒有發現任何問題";
         }
 
-        return message.toString();
+        return String.join("；", messages);
     }
 
     /**
