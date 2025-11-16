@@ -15,9 +15,8 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
+import java.util.stream.Collectors;
 
 @RestController
 @RequestMapping("/api")
@@ -180,68 +179,96 @@ public class TestController {
     }
 
     /**
-     * POST /api/detectNewFolders
-     * 偵測新資料夾並回傳未在 JSON 中的資料夾列表
+     * 偵測新資料夾（原有功能 + 檢測遺失資料夾）
      */
     @PostMapping("/detectNewFolders")
-    public ResponseEntity<Map<String, Object>> detectNewFolders() {
-        Map<String, Object> response = new HashMap<>();
-
+    public ApiResponse detectNewFolders() {
         try {
-            // 讀取現有的 JSON
-            File jsonFile = new File(jsonFilePath);
-            List<Map<String, Object>> articles;
+            // 1. 讀取現有 JSON 資料
+            List<Map<String, Object>> existingArticles = readJsonFile();
+            Set<String> existingFolders = existingArticles.stream()
+                    .map(article -> (String) article.get("folder"))
+                    .collect(Collectors.toSet());
 
-            if (jsonFile.exists()) {
-                String jsonContent = new String(Files.readAllBytes(Paths.get(jsonFilePath)));
-                articles = objectMapper.readValue(
-                        jsonContent,
-                        objectMapper.getTypeFactory().constructCollectionType(List.class, Map.class)
-                );
-            } else {
-                articles = new java.util.ArrayList<>();
+            // 2. 讀取實際資料夾
+            File baseDir = new File(writeupFolderPath);
+            if (!baseDir.exists() || !baseDir.isDirectory()) {
+                return ApiResponse.error("Writeups 目錄不存在");
             }
 
-            // 取得所有已存在的 folder
-            List<String> existingFolders = new java.util.ArrayList<>();
-            for (Map<String, Object> article : articles) {
-                if (article.containsKey("folder")) {
-                    existingFolders.add(article.get("folder").toString());
-                }
+            File[] folders = baseDir.listFiles(File::isDirectory);
+            if (folders == null) {
+                folders = new File[0];
             }
 
-            // 掃描 writeups 資料夾
-            File writeupDir = new File(writeupFolderPath);
-            List<String> newFolders = new java.util.ArrayList<>();
+            Set<String> actualFolders = Arrays.stream(folders)
+                    .map(File::getName)
+                    .collect(Collectors.toSet());
 
-            if (writeupDir.exists() && writeupDir.isDirectory()) {
-                File[] folders = writeupDir.listFiles(File::isDirectory);
+            // 3. 找出新資料夾（實際有但 JSON 沒有）
+            List<String> newFolders = actualFolders.stream()
+                    .filter(folder -> !existingFolders.contains(folder))
+                    .sorted()
+                    .collect(Collectors.toList());
 
-                if (folders != null) {
-                    for (File folder : folders) {
-                        String folderName = folder.getName();
-                        if (!existingFolders.contains(folderName)) {
-                            newFolders.add(folderName);
-                        }
-                    }
-                }
-            }
+            // 4. 找出遺失資料夾（JSON 有但實際沒有）
+            List<String> missingFolders = existingFolders.stream()
+                    .filter(folder -> !actualFolders.contains(folder))
+                    .sorted()
+                    .collect(Collectors.toList());
 
-            response.put("success", true);
-            response.put("newFolders", newFolders);
-            response.put("count", newFolders.size());
+            // 5. 準備回傳結果
+            Map<String, Object> result = new HashMap<>();
+            result.put("newFolders", newFolders);
+            result.put("missingFolders", missingFolders);
 
-            return ResponseEntity.ok(response);
+            String message = buildDetectionMessage(newFolders, missingFolders);
 
-        } catch (Exception e) {
+            return ApiResponse.success(message, result);
+
+        } catch (IOException e) {
             e.printStackTrace();
-            response.put("success", false);
-            response.put("message", "偵測失敗");
-            response.put("error", e.getMessage());
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(response);
+            return ApiResponse.error("偵測失敗: " + e.getMessage());
         }
     }
 
+    /**
+     * 建立偵測訊息
+     */
+    private String buildDetectionMessage(List<String> newFolders, List<String> missingFolders) {
+        StringBuilder message = new StringBuilder();
+
+        if (!newFolders.isEmpty()) {
+            message.append("發現 ").append(newFolders.size()).append(" 個新資料夾");
+        }
+
+        if (!missingFolders.isEmpty()) {
+            if (message.length() > 0) {
+                message.append("；");
+            }
+            message.append("發現 ").append(missingFolders.size()).append(" 個遺失資料夾");
+        }
+
+        if (message.length() == 0) {
+            message.append("沒有發現新增或遺失的資料夾");
+        }
+
+        return message.toString();
+    }
+
+
+    /**
+     * 讀取 JSON 檔案
+     */
+    private List<Map<String, Object>> readJsonFile() throws IOException {
+        File jsonFile = new File(jsonFilePath);
+        if (!jsonFile.exists()) {
+            return new ArrayList<>();
+        }
+
+        return objectMapper.readValue(jsonFile,
+                objectMapper.getTypeFactory().constructCollectionType(List.class, Map.class));
+    }
 
     /**
      * 新增資料夾並建立 README.md
