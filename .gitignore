@@ -1,0 +1,66 @@
+### IntelliJ IDEA ###
+.idea/
+*.iws
+*.iml
+*.ipr
+
+# IntelliJ 個人設定（避免衝突）
+.idea/**/workspace.xml
+.idea/**/tasks.xml
+.idea/**/usage.statistics.xml
+.idea/**/dictionaries
+.idea/**/shelf
+.idea/**/httpRequests
+
+# IDE 自動產生的資料夾
+out/
+
+### Maven ###
+target/
+pom.xml.tag
+pom.xml.releaseBackup
+pom.xml.versionsBackup
+pom.xml.next
+release.properties
+dependency-reduced-pom.xml
+
+# Maven wrapper
+.mvn/timing.properties
+!/.mvn/wrapper/maven-wrapper.jar
+
+### Logs ###
+*.log
+logs/
+
+### OS generated ###
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+### Java ###
+*.class
+*.jar
+*.war
+*.ear
+*.class
+*.javadoc
+
+### Spring Boot ###
+# Spring Boot devtools tmp
+.spring-boot-devtools.properties
+.spring-devtools.yaml
+
+### Environment / Secret Files（避免把密碼上 Git）###
+*.env
+.env.*
+application*.yml
+application*.yaml
+application*.properties
+
+# 如果是多人專案，用 application-example.yml 替代
