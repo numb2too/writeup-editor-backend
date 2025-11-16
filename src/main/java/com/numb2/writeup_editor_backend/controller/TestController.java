@@ -2,6 +2,7 @@ package com.numb2.writeup_editor_backend.controller;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
+import com.numb2.writeup_editor_backend.response.ApiResponse;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -10,6 +11,7 @@ import org.springframework.web.bind.annotation.*;
 import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
+import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
@@ -237,6 +239,51 @@ public class TestController {
             response.put("message", "偵測失敗");
             response.put("error", e.getMessage());
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(response);
+        }
+    }
+
+
+    /**
+     * 新增資料夾並建立 README.md
+     */
+    @PostMapping("/createFolder")
+    public ApiResponse createFolder(@RequestBody Map<String, String> request) {
+        String folderName = request.get("folderName");
+
+        if (folderName == null || folderName.trim().isEmpty()) {
+            return ApiResponse.error("資料夾名稱不能為空");
+        }
+
+        // 移除不合法字元
+        folderName = folderName.trim().replaceAll("[\\\\/:*?\"<>|]", "");
+
+        try {
+            // 建立資料夾路徑
+            Path folderPath = Paths.get(writeupFolderPath, folderName);
+
+            // 檢查資料夾是否已存在
+            if (Files.exists(folderPath)) {
+                return ApiResponse.error("資料夾「" + folderName + "」已存在");
+            }
+
+            // 建立資料夾
+            Files.createDirectories(folderPath);
+
+            // 建立 README.md 檔案
+            Path readmePath = folderPath.resolve("README.md");
+            String readmeContent = "# " + folderName + "\n\n" +
+                    "## 簡介\n\n" +
+                    "這是關於 " + folderName + " 的文章。\n\n" +
+                    "## 內容\n\n" +
+                    "請在此處編寫內容...\n";
+
+            Files.writeString(readmePath, readmeContent);
+
+            return ApiResponse.success("成功建立資料夾「" + folderName + "」並建立 README.md", folderName);
+
+        } catch (IOException e) {
+            e.printStackTrace();
+            return ApiResponse.error("建立資料夾失敗: " + e.getMessage());
         }
     }
 }
